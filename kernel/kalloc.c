@@ -80,3 +80,17 @@ kalloc(void)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
+
+//return the free memory of the system.
+//(lab2: syscall lab).
+int count_freemem(void)
+{
+	struct run *r;
+	r = kmem.freelist;
+        int freemem = 0;
+	while(r){
+		freemem += PGSIZE;
+                r = r->next;
+	}
+	return freemem;
+}

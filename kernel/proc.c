@@ -277,6 +277,8 @@ fork(void)
 
   np->parent = p;
 
+  np->trace_sys_no = p->trace_sys_no;
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -692,4 +694,18 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+//count number of unused processes.
+//(lab2: syscall lab).
+int
+count_uproc(void)
+{
+	struct proc *p;
+        int nproc = 0;
+	for(p = proc; p < &proc[NPROC]; p++) {
+    		if(p->state != UNUSED)
+      			nproc++;
+  	}
+	return nproc;
 }
