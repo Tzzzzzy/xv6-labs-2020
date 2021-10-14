@@ -5,6 +5,12 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "types.h"
+#include "param.h"
+#include "memlayout.h"
+#include "defs.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -132,7 +138,7 @@ kvmpa(uint64 va)
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(myproc()->kpgtbl, va, 0);
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
@@ -439,4 +445,43 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+//helper of vmprint.
+void
+vmprinthelper(pagetable_t pagetable, int level)
+{
+	if(level == 3){
+		return;
+	}
+	for(int i = 0; i < 512; i++){
+		pte_t pte = pagetable[i];
+		if(pte & PTE_V){
+			uint64 child = PTE2PA(pte);
+			switch(level) {
+				case 0: printf("..%d: pte %p pa %p\n", i, pte, child); break;
+				case 1: printf(".. ..%d: pte %p pa %p\n", i, pte, child); break;
+				case 2: printf(".. .. ..%d: pte %p pa %p\n", i, pte, child); break;
+			}
+			vmprinthelper((pagetable_t)child, level+1);
+		}
+  	}
+}
+
+// print the pagetable.
+// page table 0x0000000087f6e000
+//..0: pte 0x0000000021fda801 pa 0x0000000087f6a000
+//.. ..0: pte 0x0000000021fda401 pa 0x0000000087f69000
+//.. .. ..0: pte 0x0000000021fdac1f pa 0x0000000087f6b000
+//.. .. ..1: pte 0x0000000021fda00f pa 0x0000000087f68000
+//.. .. ..2: pte 0x0000000021fd9c1f pa 0x0000000087f67000
+//..255: pte 0x0000000021fdb401 pa 0x0000000087f6d000
+//.. ..511: pte 0x0000000021fdb001 pa 0x0000000087f6c000
+//.. .. ..510: pte 0x0000000021fdd807 pa 0x0000000087f76000
+//.. .. ..511: pte 0x0000000020001c0b pa 0x0000000080007000
+void
+vmprint(pagetable_t pagetable)
+{
+	printf("page table %p\n", pagetable);
+	vmprinthelper(pagetable, 0);
 }
