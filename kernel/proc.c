@@ -31,7 +31,7 @@ procinit(void)
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
   }
-  kvminithart();
+  //kvminithart();
 }
 
 // Must be called with interrupts disabled,
@@ -94,8 +94,8 @@ proc_kvminit(int p_idx)
     panic("pkvmmap virtio0");
   
   // CLINT
-  if(mappages(p_kpgtbl, CLINT, 0x10000, CLINT, PTE_R | PTE_W) != 0)
-    panic("pkvmmap clint");
+  //if(mappages(p_kpgtbl, CLINT, 0x10000, CLINT, PTE_R | PTE_W) != 0)
+    //panic("pkvmmap clint");
 
   // PLIC
   if(mappages(p_kpgtbl, PLIC, 0x400000, PLIC, PTE_R | PTE_W) != 0)
@@ -126,6 +126,61 @@ proc_kvminit(int p_idx)
     panic("pkvmmap kstack");
 
   return p_kpgtbl;
+}
+
+int
+proc_mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  uint64 a, last;
+  pte_t *pte;
+
+  a = PGROUNDDOWN(va);
+  last = PGROUNDDOWN(va + size - 1);
+  for(;;){
+    if((pte = walk(pagetable, a, 1)) == 0)
+      return -1;
+    *pte = PA2PTE(pa) | perm | PTE_V;
+    if(a == last)
+      break;
+    a += PGSIZE;
+    pa += PGSIZE;
+  }
+  return 0;
+}
+
+int
+copy_ppgtbl2pkpgtbl(pagetable_t old, pagetable_t new, uint64 oldsz, uint64 newsz)
+{
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+  //char *mem;
+
+  uint64 oldsz_aligned = PGROUNDUP(oldsz);
+
+  for(i = oldsz_aligned; i < newsz; i += PGSIZE){
+    if((pte = walk(old, i, 0)) == 0)
+      panic("copy_ppgtbl2pkpgtbl: pte should exist");
+    if((*pte & PTE_V) == 0)
+      panic("copy_ppgtbl2pkpgtbl: page not present");
+    pa = PTE2PA(*pte);
+
+    //A page with PTE_U set cannot be accessed in kernel mode.
+    flags = PTE_FLAGS(*pte) & (~PTE_U);
+    //if((mem = kalloc()) == 0)
+      //goto err;
+    //memmove(mem, (char*)pa, PGSIZE);
+    //if(proc_mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+    if(proc_mappages(new, i, PGSIZE, pa, flags) != 0){
+      //kfree(mem);
+      goto err;
+    }
+  }
+  return 0;
+
+ err:
+  uvmunmap(new, oldsz_aligned, i - oldsz / PGSIZE, 1);
+  return -1;
 }
 
 // Look in the process table for an UNUSED proc.
@@ -181,7 +236,7 @@ found:
 // Recursively free page-table pages.
 // All leaf mappings must already have been removed.
 void
-freewalk_proc(pagetable_t pagetable, int level)
+freewalk_pkpgtbl(pagetable_t pagetable, int level)
 {
   if(level == 3)
     return;
@@ -191,7 +246,7 @@ freewalk_proc(pagetable_t pagetable, int level)
     if(pte & PTE_V){
       // this PTE points to a lower-level page table.
       uint64 child = PTE2PA(pte);
-      freewalk_proc((pagetable_t)child, level + 1);
+      freewalk_pkpgtbl((pagetable_t)child, level + 1);
       pagetable[i] = 0;
     }
   }
@@ -207,6 +262,8 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  //printf("p->sz %x\n", p->sz);
+  //printf("p->kstack %p\n", p->kstack);
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -226,7 +283,7 @@ freeproc(struct proc *p)
   p->kstack = 0;
 
   if(p->kpgtbl)
-	  freewalk_proc(p->kpgtbl, 0);
+	  freewalk_pkpgtbl(p->kpgtbl, 0);
   p->kpgtbl = 0;
 }
 
@@ -301,6 +358,12 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  // add mappings(p's pagetable) to p's kernel pagetable.
+  if(copy_ppgtbl2pkpgtbl(p->pagetable, p->kpgtbl, 0, PGSIZE) < 0){
+    freeproc(p);
+    release(&p->lock);
+  }
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -320,14 +383,27 @@ growproc(int n)
 {
   uint sz;
   struct proc *p = myproc();
+  // make sure that virtual address range not overlapping the range of virtual 
+  // addresses that the kernel uses for its own instructions and data.
+  if(p->sz + n >= PLIC)
+    return -1;
 
   sz = p->sz;
   if(n > 0){
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    // add mappings(p's pagetable) to p's kernel pagetable.
+    if(copy_ppgtbl2pkpgtbl(p->pagetable, p->kpgtbl, p->sz, p->sz + n) < 0){
+      freeproc(p);
+      release(&p->lock);
+      return -1;
+    }
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    
+    int npages = (PGROUNDUP(p->sz) - PGROUNDUP(p->sz + n)) / PGSIZE;
+    uvmunmap(p->kpgtbl, PGROUNDUP(p->sz + n), npages, 0);
   }
   p->sz = sz;
   return 0;
@@ -354,6 +430,13 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  // add mappings(child's pagetable) to child's kernel pagetable.
+  if(copy_ppgtbl2pkpgtbl(np->pagetable, np->kpgtbl, 0, np->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   np->parent = p;
 
@@ -572,6 +655,7 @@ scheduler(void)
     }
 #if !defined (LAB_FS)
     if(found == 0) {
+      kvminithart();
       intr_on();
       asm volatile("wfi");
     }
