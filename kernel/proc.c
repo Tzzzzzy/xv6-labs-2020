@@ -164,15 +164,9 @@ copy_ppgtbl2pkpgtbl(pagetable_t old, pagetable_t new, uint64 oldsz, uint64 newsz
     if((*pte & PTE_V) == 0)
       panic("copy_ppgtbl2pkpgtbl: page not present");
     pa = PTE2PA(*pte);
-
     //A page with PTE_U set cannot be accessed in kernel mode.
     flags = PTE_FLAGS(*pte) & (~PTE_U);
-    //if((mem = kalloc()) == 0)
-      //goto err;
-    //memmove(mem, (char*)pa, PGSIZE);
-    //if(proc_mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
     if(proc_mappages(new, i, PGSIZE, pa, flags) != 0){
-      //kfree(mem);
       goto err;
     }
   }
