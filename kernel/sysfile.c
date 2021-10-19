@@ -486,15 +486,24 @@ sys_pipe(void)
 }
 
 uint64
-sys_sigalarm(uint64 ticks, void (*handler)())
+sys_sigalarm(void)
 {
-
-}
-
-uint64
-sys_sigreturn(void)
-{
+  if(argint(0, &myproc()->ticks) < 0)
+    return -1;
+  uint64 handler;
+  if(argaddr(1, &handler) < 0)
+    return -1;
+  myproc()->handler = (void(*)())handler;
   return 0;
 }
 
+int handler_working = 0;
+uint64
+sys_sigreturn(void)
+{
+  //myproc()->trapframe = &tp; //DON'T!!! This will cause panic kree!
+  *myproc()->trapframe = tp;
+  handler_working = 0;
+  return 0;
+}
 

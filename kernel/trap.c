@@ -7,7 +7,10 @@
 #include "defs.h"
 
 struct spinlock tickslock;
+
 uint ticks;
+
+struct trapframe tp;
 
 extern char trampoline[], uservec[], userret[];
 
@@ -78,7 +81,17 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
+  {
+    if(myproc()->tickpassed == myproc()->ticks && myproc()->ticks != 0 && handler_working != 1)
+    {
+      handler_working = 1;
+      tp = *p->trapframe;
+      p->trapframe->epc = (uint64)p->handler;
+      myproc()->tickpassed = 0;
+    }
+    myproc()->tickpassed += 1;
     yield();
+  }
 
   usertrapret();
 }

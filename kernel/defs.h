@@ -141,6 +141,9 @@ int             fetchaddr(uint64, uint64*);
 void            syscall();
 
 // trap.c
+extern struct trapframe tp;
+extern int     handler_working;
+
 extern uint     ticks;
 void            trapinit(void);
 void            trapinithart(void);

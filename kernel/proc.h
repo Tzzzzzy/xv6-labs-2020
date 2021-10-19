@@ -94,7 +94,7 @@ struct proc {
   int xstate;                  // Exit status to be returned to parent's wait
   int pid;                     // Process ID
   int ticks;
-  void *handler;
+  void (*handler)();
   int tickpassed;
 
   // these are private to the process, so p->lock need not be held.
