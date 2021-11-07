@@ -29,6 +29,26 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+pte_t *
+mywalk(pagetable_t pagetable, uint64 va, int alloc)
+{
+  if(va >= MAXVA)
+    panic("walk");
+
+  for(int level = 2; level > 0; level--) {
+    pte_t *pte = &pagetable[PX(level, va)];
+    if(*pte & PTE_V) {
+      pagetable = (pagetable_t)PTE2PA(*pte);
+    } else {
+      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
+        return 0;
+      memset(pagetable, 0, PGSIZE);
+      *pte = PA2PTE(pagetable) | PTE_V;
+    }
+  }
+  return &pagetable[PX(0, va)];
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -67,7 +87,43 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } else if(r_scause() == 13 || r_scause() == 15){
+    uint64 va = r_stval();
+    if(va >= MAXVA || (va <= PGROUNDDOWN(p->trapframe->sp) && va >= PGROUNDDOWN(p->trapframe->sp) - PGSIZE))
+      p->killed = 1;
+    else{
+      pte_t *pte;
+      pte = mywalk(p->pagetable, va, 0);
+      if(pte == 0)
+        p->killed = 1;
+      else{
+        uint64 pa = PTE2PA(*pte);
+        if(pa == 0)
+          p->killed = 1;
+        else{
+          uint64 ka = (uint64)kalloc();
+          if(ka == 0)
+            p->killed = 1;
+          else {
+            memmove((void*)ka, (void*)pa, PGSIZE);    
+            va = PGROUNDDOWN(va);
+            //save the *pte to pte_sv
+            pte_t pte_sv = *pte;
+            uvmunmap(p->pagetable, va, 1, 1);
+	    //kfree((void*)pa);
+            uint64 flags = PTE_FLAGS(pte_sv);
+            flags = (flags & ~PTE_COW) | PTE_W;
+	    //*pte = PA2PTE(ka) & flags;
+            if(mappages(p->pagetable, va, PGSIZE, ka, flags) != 0){
+              kfree((void*)ka);
+              p->killed = 1;
+            }
+          }
+        }
+      }
+    }
+  }
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

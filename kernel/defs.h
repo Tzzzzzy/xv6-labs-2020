@@ -63,6 +63,8 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+void 	        inc_phypage_refs(void*);
+void 	        dec_phypage_refs(void*);
 
 // log.c
 void            initlog(int, struct superblock*);

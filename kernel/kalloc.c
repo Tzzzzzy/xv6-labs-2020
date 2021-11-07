@@ -14,6 +14,22 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+uint64 phypage_refs[PHYSTOP / 4096];
+
+void
+inc_phypage_refs(void *pa)
+{
+  phypage_refs[(uint64)pa / 4096] += 1;
+}
+
+void
+dec_phypage_refs(void *pa)
+{
+  if(phypage_refs[(uint64)pa / 4096] == 0)
+    return;
+  phypage_refs[(uint64)pa / 4096] -= 1;
+}
+
 struct run {
   struct run *next;
 };
@@ -35,8 +51,10 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
+    phypage_refs[(uint64)p / 4096] = 0;
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by v,
@@ -50,6 +68,14 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+
+  acquire(&kmem.lock);
+  dec_phypage_refs(pa);
+  if(phypage_refs[(uint64)pa / 4096] > 0){
+    release(&kmem.lock);
+    return;
+  }
+  release(&kmem.lock);
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
@@ -76,7 +102,9 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
+    inc_phypage_refs((void*)r);   
     memset((char*)r, 5, PGSIZE); // fill with junk
+  }
   return (void*)r;
 }
